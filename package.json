@@ -14,6 +14,7 @@
       "yargs": "~3.31",
       "process": "~0.11.2",
       "es6-promise": "~3.0",
-      "sprintf": "~0.1"
+      "sprintf": "~0.1",
+      "randgen": "~0.1"
   }
 }

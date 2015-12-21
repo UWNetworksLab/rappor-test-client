@@ -1,8 +1,0 @@
-{
-    "name": "rappor-test-client",
-    "description" : "Test rappor parameters with test variables.",
-    "app": {
-        "script": "test-client.js"
-    }
-}
-
