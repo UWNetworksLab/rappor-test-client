@@ -2,8 +2,10 @@ var process = require("process");
 var freedom = require("freedom-for-node");
 var randgen = require('randgen');
 var request = require('request');
+var fs = require('fs');
+
 var argv = require('yargs')
-    .usage('Usage: $0 [-m mean] [-v variance] [-n num_samples] [-s] [-u host] [-p path] [-V variable]')
+    .usage('Usage: $0 [-m mean] [-v variance] [-n num_samples] [-s] [-p paramfile] [-f savefile] [-H host] [-P path] [-V variable]')
     .default('mean', 9)
     .default('variance', 4)
     .default('samples', 10)
@@ -11,13 +13,16 @@ var argv = require('yargs')
     .default('host', 'https://www.uproxy.org')
     .default('path', 'submit-rappor-stats')
     .default('variable', 'test-v1')
+    .default('paramfile', 'params.csv')
     .alias('m', 'mean')
     .alias('v', 'variance')
     .alias('n', 'samples')
-    .alias('h', 'host')
-    .alias('p', 'path')
+    .alias('H', 'host')
+    .alias('P', 'path')
     .alias('V', 'variable')
     .alias('s', 'submit')
+    .alias('f', 'savefile')
+    .alias('p', 'paramfile')
     .argv;
 
 function post_values(val) {
@@ -53,47 +58,93 @@ function post_values(val) {
     post_value_n(0);
 }
 
-freedom.freedom("node_modules/freedomjs-anonymized-metrics/anonmetrics.json", {}).then(
-    function (rappor_proto) {
-        var metrics_def = {"name":"TestMetrics",
-                           "definition": {}};
-        for (var i = 0; i < argv.samples; i++) {
-            // TODO: use my modified max-based log metics, and define a max here.
-            metrics_def.definition["test-" + (1 + i)] = {
-                "type": "logarithmic",
-                "base": 2,
-                "num_bloombits": 256,
-                "num_hashes": 2,
-                "num_cohorts": 64,
-                "prob_p": 0.5,
-                "prob_q": 0.75,
-                "prob_f": 0.5,
-                "flag_oneprr": true
+function save_values(vals, outputFileName) {
+    var stats = [];
+    var date = new Date();
+    var hourFields = [ date.getFullYear(), 1+date.getMonth(), date.getDate(),
+                      1+date.getHours(), date.getMinutes(), date.getSeconds() ]
+    var basis = parseInt('cab73c58', 16);
+    var keys = Object.keys(vals);
+    for (var i = 0; i < keys.length; i++) {
+        stat = { 'submission_id' : '8cbd24dc-45b6-41b3-b9d5-1a7d' + (basis + i).toString(16),
+                 'metric' : 'test-v1',
+                 'hour': hourFields,
+                 'value': vals[keys[i]] }
+        stats.push(stat);
+    }
+    values = { 'count': stats.length, 'rapporStats': stats }
+    fs.writeFileSync(outputFileName, JSON.stringify(values));
+}
+
+var READ_SIZE = 16384;
+var param_bloombits, param_hashes, param_cohorts, param_prob_p, param_prob_q, param_prob_f;
+
+console.log("Opening ", argv.paramfile);
+fs.read(fs.openSync(argv.paramfile, 'r'), new Buffer(READ_SIZE), 0, READ_SIZE, null,
+        function (e,bytesRead, paramBuf) {
+            var paramText = paramBuf.toString('utf8', 0, bytesRead);
+            // values are k,h,m,p,q,f
+            var varNames = paramText.split('\n')[0].split(',');
+            var params = paramText.split('\n')[1].split(',');
+            param_bloombits = parseInt(params[varNames.indexOf('k')]);
+            param_hashes = parseInt(params[varNames.indexOf('h')]);
+            param_cohorts = parseInt(params[varNames.indexOf('m')]);
+            param_prob_p = parseFloat(params[varNames.indexOf('p')]);
+            param_prob_q = parseFloat(params[varNames.indexOf('q')]);
+            param_prob_f = parseFloat(params[varNames.indexOf('f')]);
+            // Now that we have the parameters, use them.
+            generateData();
+});
+
+function generateData() {
+    freedom.freedom("node_modules/freedomjs-anonymized-metrics/anonmetrics.json", {}).then(
+        function (rappor_proto) {
+            console.log("starting data generation");
+            var metrics_def = {"name":"TestMetrics",
+                               "definition": {}};
+            for (var i = 0; i < argv.samples; i++) {
+                // TODO: use my modified max-based log metics, and define a max here.
+                metrics_def.definition["test-" + (1 + i)] = {
+                    "type": "logarithmic",
+                    "base": 2,
+                    "num_bloombits": param_bloombits,
+                    "num_hashes": param_hashes,
+                    "num_cohorts": param_cohorts,
+                    "prob_p": param_prob_p,
+                    "prob_q": param_prob_q,
+                    "prob_f": param_prob_f,
+                    "flag_oneprr": true
+                };
+            }
+            var metric = new rappor_proto(metrics_def);
+
+            var all_reports = [];
+            var samples = [];
+            for (var i = 0; i < argv.samples; i++) {
+                var sample;
+                do {
+                    sample = Math.ceil(randgen.rnorm(argv.mean, argv.variance));
+                } while (sample < 0);
+                samples.push(sample);
+                all_reports.push(metric.report("test-" + (1 + i), sample));
             };
-        }
-        var metric = new rappor_proto(metrics_def);
-
-        var all_reports = [];
-        var samples = [];
-        for (var i = 0; i < argv.samples; i++) {
-            var sample = Math.ceil(randgen.rnorm(argv.mean, argv.variance));
-            samples.push(sample);
-            all_reports.push(metric.report("test-" + (1 + i), sample));
-        };
-        Promise.all(all_reports).then(function() {
-            metric.retrieve().then(
-                function(val) {
-                    console.log("Samples: " + samples);
-                    for (var k in val) {
-                        console.log("  " + val[k]);
-                    }
-                    if (argv.submit) {
-                        post_values(val);
-                    } else {
-                        process.exit(0);
-                    }
-                });
+            Promise.all(all_reports).then(function() {
+                metric.retrieve().then(
+                    function(val) {
+                        console.log("Samples: " + samples);
+                        for (var k in val) {
+                            console.log("  " + val[k]);
+                        }
+                        if (argv.savefile) {
+                            save_values(val, argv.savefile);
+                        }
+                        if (argv.submit) {
+                            post_values(val);
+                        } else {
+                            process.exit(0);
+                        }
+                    });
+            });
         });
-    });
-
+};
 
