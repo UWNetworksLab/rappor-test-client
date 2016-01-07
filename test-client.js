@@ -5,7 +5,7 @@ var request = require('request');
 var fs = require('fs');
 
 var argv = require('yargs')
-    .usage('Usage: $0 [-m mean] [-v variance] [-n num_samples] [-s] [-p paramfile] [-f savefile] [-H host] [-P path] [-V variable]')
+    .usage('Usage: $0 [-h] [-m mean] [-v variance] [-n num_samples] [-s] [-p paramfile] [-f savefile] [-H host] [-P path] [-V variable]')
     .default('mean', 9)
     .default('variance', 4)
     .default('samples', 10)
@@ -14,6 +14,8 @@ var argv = require('yargs')
     .default('path', 'submit-rappor-stats')
     .default('variable', 'test-v1')
     .default('paramfile', 'params.csv')
+    .alias('h', 'help')
+    .help('help')
     .alias('m', 'mean')
     .alias('v', 'variance')
     .alias('n', 'samples')
@@ -58,7 +60,7 @@ function post_values(val) {
     post_value_n(0);
 }
 
-function save_values(vals, outputFileName) {
+function save_values(vals, samples, outputFileName) {
     var stats = [];
     var date = new Date();
     var hourFields = [ date.getFullYear(), 1+date.getMonth(), date.getDate(),
@@ -72,14 +74,15 @@ function save_values(vals, outputFileName) {
                  'value': vals[keys[i]] }
         stats.push(stat);
     }
-    values = { 'count': stats.length, 'rapporStats': stats }
+    values = { 'count': stats.length, 'rapporStats': stats };
     fs.writeFileSync(outputFileName, JSON.stringify(values));
+    fs.writeFileSync(outputFileName.split(".")[0] + ".real", JSON.stringify(samples));
 }
 
 var READ_SIZE = 16384;
 var param_bloombits, param_hashes, param_cohorts, param_prob_p, param_prob_q, param_prob_f;
 
-console.log("Opening ", argv.paramfile);
+console.log("Opening", argv.paramfile);
 fs.read(fs.openSync(argv.paramfile, 'r'), new Buffer(READ_SIZE), 0, READ_SIZE, null,
         function (e,bytesRead, paramBuf) {
             var paramText = paramBuf.toString('utf8', 0, bytesRead);
@@ -92,6 +95,7 @@ fs.read(fs.openSync(argv.paramfile, 'r'), new Buffer(READ_SIZE), 0, READ_SIZE, n
             param_prob_p = parseFloat(params[varNames.indexOf('p')]);
             param_prob_q = parseFloat(params[varNames.indexOf('q')]);
             param_prob_f = parseFloat(params[varNames.indexOf('f')]);
+            console.log(argv.paramfile,":\n", paramText);
             // Now that we have the parameters, use them.
             generateData();
 });
@@ -136,7 +140,7 @@ function generateData() {
                             console.log("  " + val[k]);
                         }
                         if (argv.savefile) {
-                            save_values(val, argv.savefile);
+                            save_values(val, samples, argv.savefile);
                         }
                         if (argv.submit) {
                             post_values(val);
