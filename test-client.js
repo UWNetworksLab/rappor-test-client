@@ -106,21 +106,21 @@ function generateData() {
             console.log("starting data generation");
             var metrics_def = {"name":"TestMetrics",
                                "definition": {}};
+            metrics_def.definition["test-v1"] = {
+                "type": "logarithmic",
+                "base": 2,
+                "num_bloombits": param_bloombits,
+                "num_hashes": param_hashes,
+                "num_cohorts": param_cohorts,
+                "prob_p": param_prob_p,
+                "prob_q": param_prob_q,
+                "prob_f": param_prob_f,
+                "flag_oneprr": true
+            };
+            var metrics = [];
             for (var i = 0; i < argv.samples; i++) {
-                // TODO: use my modified max-based log metics, and define a max here.
-                metrics_def.definition["test-" + (1 + i)] = {
-                    "type": "logarithmic",
-                    "base": 2,
-                    "num_bloombits": param_bloombits,
-                    "num_hashes": param_hashes,
-                    "num_cohorts": param_cohorts,
-                    "prob_p": param_prob_p,
-                    "prob_q": param_prob_q,
-                    "prob_f": param_prob_f,
-                    "flag_oneprr": true
-                };
+                metrics.push(new rappor_proto(metrics_def));
             }
-            var metric = new rappor_proto(metrics_def);
 
             var all_reports = [];
             var samples = [];
@@ -130,12 +130,13 @@ function generateData() {
                     sample = Math.ceil(randgen.rnorm(argv.mean, argv.variance));
                 } while (sample < 0);
                 samples.push(sample);
-                all_reports.push(metric.report("test-" + (1 + i), sample));
+                all_reports.push(metrics[i].report("test-v1", sample));
             };
             Promise.all(all_reports).then(function() {
-                metric.retrieve().then(
-                    function(val) {
+                Promise.all(metrics.map(function(met) { return met.retrieve(); })).then(
+                    function(val_kvs) {
                         console.log("Samples: " + samples);
+                        var val = val_kvs.map(function(m) { return m["test-v1"];});
                         for (var k in val) {
                             console.log("  " + val[k]);
                         }
